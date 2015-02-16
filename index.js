@@ -3,7 +3,15 @@ var fs = require('fs')
 var respawn = require('respawn')
 var chalk = require('chalk')
 var updateNotifier = require('update-notifier')
+var yargs = require('yargs')
+var gaze = require('gaze')
+var _ = require('lodash')
+var debug = require('debug')('cult')
 var pkg = require('./package.json')
+
+args = yargs
+  .alias('w', 'watch')
+  .argv
 
 /*
 * Functions
@@ -27,8 +35,16 @@ function log(str) {
 // Check for updates
 updateNotifier({packageName: pkg.name, packageVersion: pkg.version}).notify()
 
+// Files to watch
+var watched = [];
+
 // Keep gulp arguments
-process.argv.splice(0, 2)
+var gulpArgs = _.rest(process.argv, 2)
+
+if (args.watch) {
+  gulpArgs = args._
+  watched.push(args.watch)
+}
 
 // Find gulpfile
 var gulpfile = findGulpfile()
@@ -40,14 +56,14 @@ var options = {
 }
 
 // Create process monitor
-var monitor = respawn(['gulp'].concat(process.argv), options)
+var monitor = respawn(['gulp'].concat(gulpArgs), options)
 monitor.maxRestarts = 0
 
 // If on Windows and gulp fails, try to replace it with gulp.cmd
 monitor.on('warn', function(err) {
   if (err.code === 'ENOENT') {
     if (process.platform === 'win32') {
-      monitor = respawn(['gulp.cmd'].concat(process.argv), options)
+      monitor = respawn(['gulp.cmd'].concat(gulpArgs), options)
       monitor.maxRestarts = 0
       monitor.on('warn', function(err) {
         if (err.code === 'ENOENT') {
@@ -70,12 +86,25 @@ monitor.on('warn', function(err) {
 
 // Start cult
 if (gulpfile) {
-  log('Watching ' + chalk.magenta(gulpfile))
+  watched.unshift(gulpfile)
 
-  fs.watchFile(gulpfile, function() {
-    log('Gulpfile changed, reloading...')
-    monitor.stop(function() {
-      monitor.start()
+  debug('process.argv %o', process.argv)
+  debug('All args %o', args)
+  debug('Gulp args %o', gulpArgs)
+  debug('Watching %o', watched)
+
+  log('Watching ' + chalk.magenta(watched.join(', ')))
+
+  gaze(watched, function(err, watcher) {
+    if (err) { throw err }
+
+    this.on('changed', function (filepath) {
+      log('Gulpfile changed, reloading...')
+      debug('File path:' + filepath)
+
+      monitor.stop(function() {
+        monitor.start()
+      })
     })
   })
 
